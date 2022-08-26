@@ -1,0 +1,92 @@
+---
+title: "ph_time_series1"
+author: "Ryan Wang"
+date: "7/10/2022"
+output: html_document
+---
+```{r setup, include=FALSE, messsage = FALSE, warning= FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(dplyr)
+library('xts') # use to convert dataframe to time series
+library(zoo)
+library(forecast)
+library(aTSA)# test stationarity of the time series
+library(fUnitRoots)
+```
+
+```{r}
+ph_<-read.csv('C:/Users/Ryan_/Documents/R/time series/files/ph_across_sites.csv')
+nlevels(ph_$site)
+
+BB <- ph_[ph_$site=="Bodega Bay",c(1,2,3,7)]
+x=strptime("2021-06-10 06:15:00","%Y-%m-%d %H:%M:%S")+900*1:12015 #每隔15min的时间戳
+power=ts(BB[,4],x) #将第四列转化为时间序列，x是时间序列的日期
+
+ph_total$site<-as.factor(ph_total$site)
+levels(ph_total$site)
+```
+
+```{r}
+##### 2.1 stationarity test #####
+plot(power)
+# The variance is not constant. Not stationary.
+
+##### 2.2 acf-自相关检验 #####
+acf(power)
+acf(power,lag.max = 150)
+pacf(power)
+# The autocorrelation has periodic fluctuation and decay slowly. Not stationary.
+
+##### 2.3 adf-Unit root test #####
+adf.test(as.numeric(power))
+# 0.576>0.05, fail to reject the null. Unit root exists. The times series is non-stationary.
+
+##### 2.4 First difference #####
+y1 <- diff(power)
+adf.test(as.numeric(y1)) # The time series becomes stationary after taking the first difference.
+plot(y1)
+acf(y1,lag.max=96*10) # The time series show seasonality.
+acf(y1, lag.max=300)
+pacf(y1,lag.max=300) # 
+pacf(y1,lag.max=960)# Many significant spikes at the beginning and decay exponentially. So q = 0.
+
+##### 2.5 White noise test #####
+Box.test(y1,type = "Ljung-Box",lag=6)
+# 2.2e-16 <0.05 , reject the null, the time series is not a white noise.
+# There is no correlation in a white noise series. No need to fit a model.
+```
+
+```{r}
+#### 3.modelling ####
+
+
+for (i in 1:5) {print(Box.test(y1,lag = 96*i , type = "Ljung-Box"))}#季节性box test 检验
+
+
+##### 3.2 参数估计 #####
+model <- arima(power,order=c(0,2,1),seasonal = list(order=c(0,2,2),period=75))
+
+##### 3.3 模型检验 #####
+###### 3.3.1 模型的显著性检验 ######
+Box.test(model$residuals,lag=6)
+# P值为0.1657,说明模型的残差没有通过显著性检验(即可以认为残差的自相关系数为零),ARIMA模型能较好地拟合本数据
+
+###### 3.3.2 模型的显著性检验 ######
+library(lmtest)
+coeftest(model)
+
+# p-value 小于0.05，说明是显著的
+
+
+#### 4.预测 ####
+x_forecast <- forecast::forecast(model,h=4*12,level=c(0.8,0.95))
+plot(x_forecast)
+accuracy(x_forecast)
+```
+

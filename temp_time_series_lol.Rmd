@@ -1,0 +1,137 @@
+---
+title: "temp_time_series"
+author: "Ryan Wang"
+date: "7/20/2022"
+output: html_document
+---
+
+---
+title: "ph_time_series2"
+author: "Ryan Wang"
+date: "7/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, messsage = FALSE, warning= FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(dplyr)
+library('xts') # use to convert dataframe to time series
+library(zoo)
+library(lmtest)
+library(forecast)
+library(aTSA)# test stationarity of the time series
+library(fUnitRoots)
+```
+
+```{r}
+ph_<-read.csv('C:/Users/Ryan_/Documents/R/time series/files/ph_across_sites.csv')
+
+lol_temp <- ph_[ph_$site=="Lompoc Landing",c(1,2,3,9)]
+y=strptime("2021-06-14 1:15:00","%Y-%m-%d %H:%M:%S")+900*1:8826 # 15 minutes time interval.
+power_temp=ts(lol_temp[1:500,4],y) # Convert the dataframe to time series object.
+total_temp=ts(lol_temp[,4],y, start = 1, end = 8826, frequency = 1)
+```
+
+```{r}
+##### 2.1 stationarity test #####
+plot(total_temp)
+# The variance is not constant. Not stationary.
+
+##### 2.2 acf-autocorrelation test #####
+
+acf(total_temp,lag.max = 960)
+pacf(total_temp, lag.max = 960)
+# The autocorrelation has periodic fluctuation and decay slowly. Not stationary.
+
+##### 2.3 adf-Unit root test #####
+adf.test(as.numeric(total_temp))
+# 0.316>0.05, fail to reject the null. Unit root exists. The times series is non-stationary.
+
+##### 2.4 First difference #####
+y1_temp <- diff(total_temp)
+frequency(y1_temp)
+plot(y1_temp)
+adf.test(as.numeric(y1_temp)) # The time series becomes stationary after taking the first difference.
+acf(y1_temp,lag.max=96*10) # The time series show seasonality.
+acf(y1_temp, lag.max=400)
+
+acf(diff(power_time), lag.max = 500)
+acf(diff(power_time), lag.max = 80)
+
+pacf(y1_temp,lag.max=960)# Many significant spikes at the beginning and decay exponentially. So q = 0.
+
+
+
+##### 2.5 White noise test #####
+Box.test(y1_temp,type = "Ljung-Box",lag=6)
+# 2.2e-16 <0.05 , reject the null, the time series is not a white noise.
+# There is no correlation in a white noise series. No need to fit a model.
+
+for (i in 1:5) {print(Box.test(y1,lag = 96*i , type = "Ljung-Box"))}
+# 2.2e-16 <0.05 , reject the null, the time series is not a white noise.
+```
+
+```{r}
+#### 3.modelling ####
+auto.arima(ts(power_temp, frequency = 76),D=1)
+model_lol_temp0 <- arima(power_temp,order=c(2,1,4),seasonal = list(order=c(0,1,0),period=76))
+model_lol_temp1 <- arima(power_temp,order=c(0,1,5),seasonal = list(order=c(0,1,3),period=76))
+model_lol_temp2 <- arima(power_temp,order=c(0,1,5),seasonal = list(order=c(0,1,3),period=78))
+
+AIC(model_lol)
+AIC(model_lol_temp2)
+##### Test the model #####
+tsdiag(model_lol_temp1)
+# Standardized residuals plot:
+# The residuals have zero mean. If the residuals have a mean other than zero, then the forecasts are biased.
+
+# ACF plot of the residual:
+# The residuals are uncorrelated. If there are correlations between residuals, then there is information left in the residuals which should be used in computing forecasts.
+
+# Ljung-Box test:
+# H0: The residuals are independently distributed.
+# HA: The residuals are not independently distributed; they exhibit serial correlation.
+
+Box.test(model_lol_temp1$residuals,lag=6)
+# p-value = 0.9701. Fail to reject the null, the residual of the model is a white noise.
+
+coeftest(model_lol_temp1)
+# p-values are lower than 0.05. 
+
+```
+
+```{r}
+acf(model_lol_temp1$residuals, lag.max = 80) # spike at lag 78
+
+acf(model_lol_temp2$residuals, lag.max = 80) # spike at lag 75
+# change in period
+
+power_temp11=ts(lol_temp[1:300,4],y)
+acf(diff(power_temp11),lag.max = 80) # lag is 75
+
+power_temp111=ts(lol_temp[300:500,4],y)
+acf(diff(power_temp111),lag.max = 80) # lag is 77
+
+```
+
+```{r}
+#### 4.Prediction ####
+x_forecast_temp0 <- forecast::forecast(model_lol_temp0,h=4*12,level=c(0.8,0.95))
+x_forecast_temp1 <- forecast::forecast(model_lol_temp1,h=4*12,level=c(0.8,0.95))
+x_forecast_temp2 <- forecast::forecast(model_lol_temp2,h=4*12,level=c(0.8,0.95))
+
+true_temp=ts(lol_temp[1:548,4],y)
+
+plot(x_forecast_temp0)
+plot(x_forecast_temp1)
+plot(x_forecast_temp2)
+plot(true_temp)
+```
+`
+

@@ -1,0 +1,283 @@
+---
+title: "ph_1"
+author: "Ryan Wang"
+date: "7/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, messsage = FALSE, warning= FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(tidyverse)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(car) #for the qqPlot function
+library(psych) #for pairs.panels()
+library(knitr)
+library(nlme)
+library(multcomp)
+library(dplyr)
+```
+
+```{r}
+# load the data
+ph_<-read.csv('C:/Users/Ryan_/Documents/R/time series/files/ph_across_sites.csv')
+ph1<-subset(ph_, select = -c(temp_durafet_c, temp_hobo_c)) 
+ph_total<-subset(ph1,  ph1$tide == 'high') # filter the data
+write.csv(ph_total,"C:/Users/Ryan_/Documents/R/time series/files/ph_total.csv", row.names = FALSE)
+
+ph_total$site<-as.factor(ph_total$site)
+levels(ph_total$site)
+
+ph_subset<-ph_total[c(502:573, 12184: 12221, 17666: 17741), ]
+
+```
+
+```{r}
+alg <- ph_ %>%
+  filter(site=="Alegria")%>%
+  mutate(date_time=mdy_hm(date_time))
+
+lol <- ph_ %>%
+  filter(site=="Lompoc Landing") %>%
+  mutate(date_time=mdy_hm(date_time))
+
+str(lol)
+bml <- ph_ %>%
+  filter(site=="Bodega Bay")%>%
+  mutate(date_time=mdy_hm(date_time))
+
+ph_  <- ph_ %>%
+  mutate(date_time=mdy_hm(date_time))
+str(bml)
+str(ph_)
+```
+
+
+```{r}
+ph_$site <- factor(ph_$site, levels=c("Lompoc Landing","Alegria","Bodega Bay"))
+ggplot(bml, aes(x=date_time, y=temp_c)) +
+  geom_point() +
+  geom_smooth(method="loess", span=0.2) 
+
+pal <- c(
+  "Alegria" = "#CC6677",
+  "Lompoc Landing" = "#44AA99",
+  "Bodega Bay" = "#6699CC"
+)
+#Set x axis limits
+lims <- as.POSIXct(strptime(c("2021-05-30 00:00:00", "2021-11-08 23:45:00"), 
+                   format = "%Y-%m-%d %H:%M:%S"))
+
+ggplot(lol, aes(x=date_time, y=p_h, group=site)) +
+  geom_line(aes(color=site), size=0.7, alpha=0.4) +
+  scale_color_manual(values = pal) + #color lines by custom site color palette
+  geom_smooth(aes(color=site), method="loess", span=0.1) +
+  scale_x_datetime(breaks = scales::date_breaks("4 weeks"), 
+                   labels = date_format("%m/%d %H:%m")) +
+  xlab("Date and time") +
+  ylab("pH")
+
+
+ggplot(ph_, aes(x=date_time, y=temp_c, group=site)) +
+  geom_line(aes(color=site), size=0.7, alpha=0.4) +
+  scale_color_manual(values = pal) + #color lines by custom site color palette
+  geom_smooth(aes(color=site), method="loess", span=0.1) +
+  xlab("Date and time") +
+  ylab("Temperature") 
+```
+
+```{r}
+str(ph_)
+raw_combine <- ph_ %>%
+  dplyr::select(site, date_time, temp_c, p_h) %>%
+  pivot_longer(cols=temp_c:p_h,
+               names_to = "group",
+               values_to = "value")
+
+ggplot(raw_combine, aes(x=date_time, y=value, group=group, color=site)) +
+  #geom_line(aes(color=site), size=0.7, alpha=0.2) +
+  geom_line(aes(x=date_time, y=value, group=group), data = . %>% filter((site %in% c("Alegria"))), alpha=0.4) + #plot only ALG line
+  geom_line(aes(x=date_time, y=value, group=group), data = . %>% filter((site %in% c("Lompoc Landing"))), alpha=0.4) + #plot only LOL
+  geom_line(aes(x=date_time, y=value, group=group), data = . %>% filter((site %in% c("Bodega Bay"))), alpha=0.4) + #plot only BML
+  geom_smooth(aes(group=site), method="loess", span=0.1, se=FALSE) + 
+  scale_color_manual(values = pal) + #color lines by custom site color palette
+  #geom_point(aes(color=group), size=0.5) +
+  scale_x_datetime(breaks = date_breaks("1 week"),
+                   labels = date_format("%b-%d"),
+                   limits = lims,
+                   # limits = as.POSIXct(strptime(c("2021-06-20 07:00",
+                   #                                "2021-10-08 07:00"),
+                   #                              format = "%Y-%m-%d %H:%M")),
+                    # c(as.POSIXct("2021-06-14 00:07:30"),as.POSIXct("2021-10-08 00:07:00")),
+                     expand = c(0, 0)) + 
+  facet_grid(group ~ ., #facet wrap to create one panel for pH and one for temp
+             scales = "free_y",
+             switch="both",
+             labeller = as_labeller(c(temp_c = "Temperature (C)", p_h = "pH"))) + #customize strip labels
+  xlab("Date and time") +
+  ylab(NULL) + #remove "Value" from Y axis label
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, vjust = 1, hjust=1, size=22),
+        #axis.title.x=element_text(size=25),
+        axis.title.x=element_blank(),
+        axis.text.y=element_text(size=22),
+        legend.text=element_text(size=20),
+        legend.title = element_blank(),
+        #element_text(size=25),
+        legend.position = c(0.91,0.60), #customize legend position on plot (bottom right)
+        #legend.position = c(0.92,0.95) #put legend on top right of plot
+        #legend.key.size = unit(4,"line"),
+        #legend.key.height = unit(1,"cm"),
+        strip.background = element_blank(), #remove strip background from facet_grid
+        strip.text.y = element_text(size = 25),
+        strip.placement = "outside") + #place the strip outside of the plot
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+## Use one-way ANOVA to compare the mean
+Null hypothesis: The means of the pH of the three sites are equal.
+Alternative hypothesis: At least one means of the pH across the three sites are not equal to others.
+```{r}
+boxplot(ph_subset$p_h~ph_subset$site, xlab = 'Sites', ylab = 'pH') # visualize data
+
+ph_aov<-aov(ph_subset$p_h~ph_subset$site, data = ph_subset)
+par(mfrow = c(2,2))
+plot(ph_aov)
+leveneTest(ph_subset$p_h~ph_subset$site, data = ph_subset) # test equality of variance
+# Even though the levene's test gives a low p-value, the residual vs. fitted plot shows no pattern and the predicted line is straight. So, I assume that the variances are the same
+
+res_ph_aov <- ph_aov$residuals
+qqPlot(res_ph_aov)
+shapiro.test(res_ph_aov) # test normality
+
+ph_subset$log_ph<-log(ph_subset$p_h)
+log_ph_aov<-aov(ph_subset$log_ph~ph_subset$site, data = ph_subset)
+par(mfrow = c(2,2))
+plot(log_ph_aov)
+leveneTest(ph_subset$log_ph~ph_subset$site, data = ph_subset) # test equality of variance
+res_log_ph_aov <- log_ph_aov$residuals
+qqPlot(res_log_ph_aov)
+shapiro.test(res_log_ph_aov)
+
+hist(ph_subset$p_h)
+hist(ph_subset$log_ph)
+# the residual does not look like normal even after transformation. But because the most of the points lie inside the 95% confidence interval and the sample size is large (central limit theorem applies), I assume that the residuals are normal.
+
+summary(log_ph_aov)
+TukeyHSD(log_ph_aov)
+```
+The p-value of the ANOVA is 2e-16, which is less than 0.05. 
+So, I reject the null that the mean pH of site 1 = the mean pH of site 2 = the mean pH of site 3.
+The Tukey-Kramer test shows that the mean pH at the three sites are significantly different from one another.
+
+Do the same to the temperature.
+```{r}
+boxplot(ph_subset$temp_c~ph_subset$site, xlab = 'Sites', ylab = 'Temperature') # visualize data
+
+temp_aov<-aov(ph_subset$temp_c~ph_subset$site, data = ph_subset)
+par(mfrow = c(2,2))
+plot(temp_aov)
+leveneTest(ph_subset$p_h~ph_subset$site, data = ph_subset) 
+
+res_temp_aov <- temp_aov$residuals
+qqPlot(res_temp_aov)
+shapiro.test(res_temp_aov) # not normal
+
+kruskal.test(ph_subset$temp_c, ph_subset$site, data = ph_subset) # Non-parametric version of one-way ANOVA
+install.packages('pgirmess')
+library('pgirmess')
+kruskalmc(ph_subset$temp_c, ph_subset$site, data = ph_subset) # # Non-parametric version of Tukey-Kramer test.
+```
+It shows that there exist significant temperature differences between Alegria-Bodega Bay and Bodega Bay-Lompoc Landing.
+
+## Test correlation
+```{r}
+# 5:47 AM sunrise
+# 8:14 PM sunset
+ph_subset$sun<-"NO"
+ph_subset[8:58, 'sun']<-"YES"
+ph_subset[75:96, 'sun']<-"YES"
+ph_subset[124:172, 'sun']<-"YES"
+
+ph_l<-subset(ph_subset, select = c(site, p_h, temp_c, tide_height, sun)) # subset used for linear regression
+pairs.panels(ph_l)
+# The graph shows that the assumptions of bivariate normality are not met. 
+# Log-transform the temperature and the tide height to see if it makes them more normal.
+ph_l$log_temp<-log(ph_l$temp_c)
+ph_l$log_tide_height<-log(ph_l$tide_height)
+pairs.panels(ph_l)
+# It shows that the pH and the log of tide height might be bivariate normally distributed.
+# But the pH and the log of temperature are not.
+
+cor.test(ph_l$p_h, ph_l$temp_c, method = 'spearman', alternative = 'two.sided') 
+# Use Spearman's Rank Correlation because of no bivariate normal relationship.
+# The p-value is 0.266, which is greater than the significant value, 0.05. I fail to reject the null that there exists correlation relationship between the temperature and the pH.
+
+cor.test(ph_l$p_h, ph_l$log_tide_height, method = 'pearson', alternative = 'two.sided')
+cor.test(ph_l$p_h, ph_l$tide_height, method = 'spearman', alternative = 'two.sided')
+# Both Pearson's correlation test and Spearman's Rank Correlation show that there exists correlation between the pH and the log of tide height. The correlation coefficient is 0.082, which is very low.
+```
+
+
+## Use linear regression to predict the pH
+## predictors: temperature and tide height (numeric); site and presence of sun (categorical).
+```{r}
+ph_null<-lm(p_h~1, data = ph_l)
+anova(ph_null)
+ph_onlyheight<-lm(p_h~tide_height, data = ph_l)
+anova(ph_onlyheight)
+
+ph_height_and_temp<-lm(p_h~tide_height+temp_c, data = ph_l)
+anova(ph_height_and_temp)
+
+ph_height_and_site<-lm(p_h~tide_height+site, data = ph_l)
+anova(ph_height_and_site)
+
+ph_height_and_sunlight<-lm(p_h~tide_height+sun, data = ph_l)
+anova(ph_height_and_sunlight)
+
+ph_height_sun_site<-lm(p_h~tide_height+sun+site, data = ph_l)
+anova(ph_height_sun_site)
+summary(ph_height_sun_site)
+
+ph_full<-lm(p_h~tide_height+sun+site+temp_c, data = ph_l)
+anova(ph_full)
+
+ph_height_temp_site<-lm(p_h~tide_height+site+temp_c, data = ph_l)
+anova(ph_height_temp_site)
+summary(ph_height_temp_site)
+AIC(ph_height_temp_site)
+summary(ph_full)
+summary(ph_height_and_temp)
+# boxplot(ph_l$p_h~ph_l$sun)
+
+# test the normality of residuals of the selected model. 
+shapiro.test(residuals(ph_full)) # p-value = 0.00174. Reject the null that the residual is normal.
+par(mfrow =c(2,2))
+plot(ph_full)
+# The shapiro-wilk test shows that the residuals are not normal.
+# But the qqPlot shows that it is normal.
+```
+Predictors are tide height, site and presence of sun.
+
+
+```{r}
+result <- AIC(ph_null, ph_onlyheight, ph_height_and_temp, ph_height_and_site, ph_height_and_sunlight,ph_height_sun_site, ph_full) 
+
+models <- list(ph_null, ph_onlyheight, ph_height_and_temp, ph_height_and_site, ph_height_and_sunlight, ph_height_sun_site, ph_full) 
+result$BIC <- sapply(models, BIC) 
+
+model_summary <- lapply(models, summary) 
+
+for(i in 1:length(models)){ 
+  result$rsq[i] <- model_summary[[i]]$r.squared 
+  result$adj_rsq[i] <- model_summary[[i]]$adj.r.squared 
+} 
+
+kable(result, digits = 2, align = "c")
+```
+
