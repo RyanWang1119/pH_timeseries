@@ -1,0 +1,497 @@
+---
+title: "Analysis of pH at Three Sites"
+author: "Ryan Wang"
+date: "9/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(dplyr)
+library('xts') # use to convert dataframe to time series
+library(zoo)
+library(lmtest)
+library(forecast)
+library(aTSA)# test stationarity of the time series
+library(fUnitRoots)
+library(imputeTS)
+library(car) #for the qqPlot function
+library(psych) #for pairs.panels()
+library(knitr)
+library(nlme)
+library(multcomp)
+library(dplyr)
+library(biwavelet)
+source("https://gist.githubusercontent.com/ellisp/4002241def4e2b360189e58c3f461b4a/raw/9ab547bff18f73e783aaf30a7e4851c9a2f95b80/dualplot.R")
+
+```
+
+## Handling the missing data: Take lompoc landing part as an example.
+```{r}
+lol_na<-read.csv('C:/Users/Ryan_/Documents/R/pH_timeseries/lol_incomplete.csv')
+total<-read.csv('C:/Users/Ryan_/Documents/R/time series/files/total.csv')
+lol_ph<-total[,c(2,4)]
+
+y=strptime("2021-06-18 1:15:00","%Y-%m-%d %H:%M:%S")+900*1:10643 
+total_ph=ts(lol_ph[,2],y, frequency = 96)
+total_ph1=ts(lol_ph[,2],y, frequency = 1)
+plot(total_ph)
+
+# Summary stats about the distribution of missing values
+statsNA(total_ph)
+ggplot_na_distribution(total_ph)
+
+# Visualize the missing values in this time series
+ggplot_na_intervals(total_ph)
+
+# Visualize the top gap sizes / NAs in a row
+ggplot_na_gapsize(total_ph)
+
+# Imputation by auto.arima
+lol_ph$imp <- na_kalman(total_ph1, model = "auto.arima")
+ggplot_na_imputations(total_ph, lol_ph$imp)
+
+# Seasonal Adjustment then Imputation by Last Observation Carried Forward
+lol_ph$ph_s_locf<-na_seadec(total_ph, algorithm = "locf")
+
+ph<-lol_ph$imp
+ph1<-lol_ph$ph_s_locf
+plot(ph, main = "pH")
+```
+
+Similarly, there are missing pH values in Algeria and Bodega Bay parts. The missing values are filled with the same technique.
+
+## Load the data with no missing values. 
+```{r}
+lol<-read.csv('C:/Users/Ryan_/Documents/R/pH_timeseries/Lompoc Landing.csv')
+ala<-read.csv('C:/Users/Ryan_/Documents/R/pH_timeseries/Algeria.csv')
+bob<-read.csv('C:/Users/Ryan_/Documents/R/pH_timeseries/Bodega Bay.csv')
+```
+
+### Visualization of the data
+```{r}
+# convert the data into time series form
+bob_x <- strptime("2021-06-10 06:15:00","%Y-%m-%d %H:%M:%S")+900*1:nrow(bob) 
+lol_x <- strptime("2021-06-14 11:30:00","%Y-%m-%d %H:%M:%S")+900*1:nrow(lol)
+ala_x <- strptime("2021-06-18 1:15:00","%Y-%m-%d %H:%M:%S")+900*1:nrow(ala)
+bob_power <- zoo(bob[,3],bob_x)  
+lol_power <- zoo(lol[,3],lol_x)
+ala_power <- zoo(ala[,3],ala_x)
+
+
+# pH at 3 sites. 
+par(mar = c(6, 4.1, 4.1, 2.1)) 
+plot(bob_power,col="red",ylim=c(7.2,8.5),xlab="Time",ylab="pH",main = 'pH at 3 sites',
+     xlim=c(as.POSIXct(strptime("2021-06-10 06:15:00","%Y-%m-%d %H:%M:%S")),
+            as.POSIXct(strptime("2021-11-06 09:15:00","%Y-%m-%d %H:%M:%S"))))
+lines(lol_power,col="green")
+lines(ala_power,col="blue")
+legend("bottom", inset = c(0, -0.35),
+       xpd = TRUE,
+       legend = c("Bodega Bay","Lompoc Landing","Alegria"),
+       col = c("red","green","blue"),
+       lty=1,
+       horiz=TRUE, 
+       cex=0.6,
+       xjust=0.5)
+```
+
+```{r}
+# classify the columns by date/week/season/hour in one day
+bob$day <-as.Date(mdy_hm(bob$date_time))
+bob$week <- week(bob$day)
+bob$month <- month(bob$day)
+bob$Q <- ifelse(bob$month %in% c(6,7,8),2,3) # if the month is June, July, August, then it is the 2nd quarter. Otherwise, it is the 3rd quarter.
+bob$hour <- hour(mdy_hm(bob$date_time))
+
+lol$day <- as.Date(mdy_hm(lol$date_time))
+lol$week <- week(lol$day)
+lol$month <- month(lol$day)
+lol$Q <- ifelse(lol$month %in% c(6,7,8),2,3)
+lol$hour <- hour(mdy_hm(lol$date_time))
+
+ala$day <- as.Date(mdy_hm(ala$date_time))
+ala$week <- week(ala$day)
+ala$month <- month(ala$day)
+ala$Q <- ifelse(ala$month %in% c(6,7,8),2,3)
+ala$hour <- hour(mdy_hm(ala$date_time))
+
+# Calculate the mean pH values that are classified in different ways
+
+bob_day_mean <- aggregate(p_h~day,data = bob,FUN = mean) # each day's mean value of pH
+bob_week_mean <- aggregate(p_h~week,data = bob,FUN = mean) # each week's mean value of pH
+bob_hour_mean <- aggregate(p_h~Q+hour,data = bob,FUN = mean)# each hour's mean value of pH, classfied by month 
+bob_month_mean <- aggregate(p_h~month,data = bob,FUN = mean)# each month's mean value of pH
+
+lol_day_mean <- aggregate(p_h~day,data = lol,FUN = mean)
+lol_week_mean <- aggregate(p_h~week,data = lol,FUN = mean)
+lol_hour_mean <- aggregate(p_h~Q+hour,data = lol,FUN = mean)
+lol_month_mean <- aggregate(p_h~month,data = lol,FUN = mean) 
+
+ala_day_mean <- aggregate(p_h~day,data = ala,FUN = mean)
+ala_week_mean <- aggregate(p_h~week,data = ala,FUN = mean)
+ala_hour_mean <- aggregate(p_h~Q+hour,data = ala,FUN = mean)
+ala_month_mean <- aggregate(p_h~month,data = ala,FUN = mean) 
+```
+
+```{r}
+# averaging across day
+par(mfrow = c(2, 2))
+plot(bob_day_mean,type="l",xaxt = "n",main="Bodega Bay",
+     xlab="day",ylab="PH",col="red")
+axis(1, at=seq(min(bob_day_mean$day),max(bob_day_mean$day),by = 10),
+     labels=seq(10,120,10))
+
+plot(lol_day_mean,type="l",xaxt = "n",main="Lompoc Landing",
+     xlab="day",ylab="PH",col="blue")
+axis(1, at=seq(min(lol_day_mean$day),max(lol_day_mean$day),by = 10),
+     labels=seq(10,120,10))
+
+plot(ala_day_mean,type="l",xaxt = "n",main="Alegria",
+     xlab="day",ylab="PH",col="green")
+axis(1, at=seq(min(ala_day_mean$day),max(ala_day_mean$day),by = 10),
+     labels=seq(10,130,10))
+
+# averaging across week
+par(mfrow = c(2, 2))
+plot(bob_week_mean,type="l",xaxt = "n",main="Bodega Bay",
+     xlab="week",ylab="PH",col="red")
+axis(1, at=seq(min(bob_week_mean$week),max(bob_week_mean$week),by = 1),
+     labels=seq(23,40,1))
+
+plot(lol_week_mean,type="l",xaxt = "n",main="Lompoc Landing",
+     xlab="week",ylab="PH",col="blue")
+axis(1, at=seq(min(lol_week_mean$week),max(lol_week_mean$week),by = 1),
+     labels=seq(24,41,1))
+
+plot(ala_week_mean,type="l",xaxt = "n",main="Alegria",
+     xlab="week",ylab="PH",col="green")
+axis(1, at=seq(min(ala_week_mean$week),max(ala_week_mean$week),by = 1),
+     labels=seq(25,43,1))
+
+# averaging across month
+par(mfrow = c(2, 2))
+plot(bob_month_mean,type="l",xaxt = "n",main="Bodega Bay",
+     xlab="month",ylab="PH",col="red")
+axis(1, at=seq(min(bob_month_mean$month),max(bob_month_mean$month),by = 1),
+     labels=seq(6,10,1))
+
+plot(lol_month_mean,type="l",xaxt = "n",main="Lompoc Landing",
+     xlab="month",ylab="PH",col="blue")
+axis(1, at=seq(min(lol_month_mean$month),max(lol_month_mean$month),by = 1),
+     labels=seq(6,10,1))
+
+plot(ala_month_mean,type="l",xaxt = "n",main="Alegria",
+     xlab="month",ylab="PH",col="green")
+axis(1, at=seq(min(ala_month_mean$month),max(ala_month_mean$month),by = 1),
+     labels=seq(6,10,1))
+```
+
+Plots of trend of pH values by averaging across day/ averaging across week/ averaging across month.
+
+```{r}
+par(mfrow = c(2, 1))
+season <- c("Summer","Fall")
+for (i in 2:3){
+  par(mar = c(4.1, 4.1, 1.1, 1.1))
+  plot(x=bob_hour_mean[bob_hour_mean$Q==i,"hour"],
+       y=bob_hour_mean[bob_hour_mean$Q==i,"p_h"],
+       col="red",xlab="hour of day",ylab="pH",
+       ylim=c(7.5,8.3),main=season[i-1],type="l")
+  lines(x=lol_hour_mean[lol_hour_mean$Q==i,"hour"],
+        y=lol_hour_mean[lol_hour_mean$Q==i,"p_h"],
+        col="green")
+  lines(x=ala_hour_mean[ala_hour_mean$Q==i,"hour"],
+        y=ala_hour_mean[ala_hour_mean$Q==i,"p_h"],
+        col="blue")
+  legend("bottom", inset = c(0.2, -0.3),
+         legend = c("Bodega Bay","Lompoc Landing","Alegria"),
+         col = c("red","green","blue"),bty = "n",
+         lty=1,xpd = TRUE,horiz=TRUE,xjust=0.5,text.font = 18,cex = 0.4)
+}
+```
+
+pH of each season by averaging across each hour of the day.
+
+```{r}
+# The original data is too large to analyze, so I subset the data.
+set.seed(12)
+ala_subset<- ala[sample(nrow(ala), 500), c(1, 3:5)]
+lol_subset<- lol[sample(nrow(lol), 500), c(1, 3:5)]
+bob_subset<- bob[sample(nrow(bob), 500), c(1, 3:5)]
+
+total<- rbind(ala_subset, lol_subset, bob_subset) # combine the three dataframes.
+```
+
+## Use one-way ANOVA to compare the mean
+Null hypothesis: The means of the pH of the three sites are equal.
+Alternative hypothesis: At least one means of the pH across the three sites are not equal to others.
+
+```{r}
+boxplot(total$p_h~total$site, xlab = 'Sites', ylab = 'pH') # visualize data
+
+ph_aov<-aov(total$p_h~total$site, data = total)
+par(mfrow = c(2,2))
+plot(ph_aov)
+leveneTest(total$p_h~total$site, data = total)
+
+res_ph_aov <- ph_aov$residuals
+qqPlot(res_ph_aov)
+shapiro.test(res_ph_aov) # test normality
+```
+
+Check if the data meets the prerequisite of ANOVA test:
+
+Use leveneTest to test equality of variance.
+Even though the levene's test gives a low p-value, the residual vs. fitted plot shows no pattern and the predicted line is straight. So, I assume that the variances are the same
+Use shapiro-wilk test to test the normality of the residuals.
+
+Even though the shapiro-wilk test gives a low p-value, the qqPlot shows that the most of the points lay inside the 95% confidence interval. So, I assume that the residuals are normal.
+Part of the reason why the test gives low p-value is that the size of the data is large.
+
+```{r}
+summary(ph_aov)
+TukeyHSD(ph_aov)
+```
+
+The p-value of the ANOVA is 2e-16, which is less than 0.05. 
+So, I reject the null that the mean pH of site 1 = the mean pH of site 2 = the mean pH of site 3.
+The Tukey-Kramer test shows that the mean pH at the three sites are significantly different from one another.
+
+Do the same to the temperature.
+
+```{r}
+boxplot(total$temp_c~total$site, xlab = 'Sites', ylab = 'Temperature') # visualize data
+
+temp_aov<-aov(total$temp_c~total$site, data = total)
+par(mfrow = c(2,2))
+plot(temp_aov)
+leveneTest(total$p_h~total$site, data = total) 
+
+res_temp_aov <- temp_aov$residuals
+qqPlot(res_temp_aov)
+shapiro.test(res_temp_aov)
+
+summary(temp_aov)
+TukeyHSD(temp_aov)
+```
+
+The Tukey-Kramer test shows that the mean temperature at the three sites are significantly different from one another.
+
+## Test correlation
+```{r}
+pairs.panels(total)
+cor.test(total$p_h, total$temp_c, method = 'pearson', alternative = 'two.sided') 
+cor.test(total$p_h, total$tide_height, method = 'pearson', alternative = 'two.sided')
+```
+
+The graph shows that the assumptions of bivariate normality are met. 
+I use Pearson's test to test the correlation. It shows that there exist significant correlation both between pH and temperature, and pH and tide height.
+The correlation coefficient between pH and temperature is 0.4821.
+The correlation coefficient between pH and tide height is 0.2836.
+
+### Visualize the correlation: Take lompoc landing as an example
+```{r}
+lol$index<-1:nrow(lol)
+
+with(lol, dualplot(x1 = index, y1 = p_h, y2 = temp_c,  main = 'pH and Temperature',
+                colgrid = "grey90",ylim1 = c(7.2, 8.4), ylim2 = c(10, 25))) # dual y-axis plot
+
+l1<-cbind(1:nrow(lol), lol$p_h)
+l2<-cbind(1:nrow(lol), lol$temp_c)
+l3<-cbind(1:nrow(lol), lol$tide_height)
+nrands = 10
+# Calculates the wavelet coherence of pH and temperature
+lol_wtc.AB = wtc(l1, l2, nrands = nrands)
+plot(lol_wtc.AB, plot.phase = T) # wavelet coherence plot
+
+with(lol, dualplot(x1 = index, y1 = p_h, y2 = tide_height, main = 'pH and Tide Height',
+                   colgrid = "grey90",ylim1 = c(7.2, 8.4), ylim2 = c(-1, 7)))
+
+# Calculates the wavelet coherence of pH and tide height
+lol_wtc.AB2 = wtc(l1, l3, nrands = nrands)
+plot(lol_wtc.AB2, plot.phase = T)
+```
+
+
+## Use linear regression to predict the pH
+predictors: temperature and tide height (numeric); (categorical).
+```{r}
+ph_null<-lm(p_h~1, data = total)
+anova(ph_null)
+
+ph_tide<-lm(p_h~tide_height, data = total)
+anova(ph_tide)
+
+ph_tide_and_temp<-lm(p_h~tide_height+temp_c, data = total)
+anova(ph_tide_and_temp)
+
+ph_tide_and_site<-lm(p_h~tide_height+site, data = total)
+anova(ph_tide_and_site)
+
+ph_full<-lm(p_h~tide_height+site+temp_c, data = total)
+anova(ph_full)
+
+ph_full_interaction<-lm(p_h~tide_height*site*temp_c, data = total)
+anova(ph_full_interaction)
+```
+
+### Summary of the created model.
+```{r}
+result <- AIC(ph_null, ph_tide, ph_tide_and_temp, ph_tide_and_site, ph_full, ph_full_interaction) 
+
+models <- list(ph_null, ph_tide, ph_tide_and_temp, ph_tide_and_site, ph_full, ph_full_interaction) 
+result$BIC <- sapply(models, BIC) 
+
+model_summary <- lapply(models, summary) 
+
+for(i in 1:length(models)){ 
+  result$rsq[i] <- model_summary[[i]]$r.squared 
+  result$adj_rsq[i] <- model_summary[[i]]$adj.r.squared 
+} 
+
+kable(result, digits = 2, align = "c")
+```
+
+The ph_full_interaction model has the lowest AIC and BIC, and the highest r sqaure value.
+Therefore, the significant predictors are site, tide height, temperature. Interactions between predictors exist.
+
+### test the normality of residuals of the selected model. 
+```{r}
+shapiro.test(residuals(ph_full_interaction))
+par(mfrow =c(2,2))
+plot(ph_full_interaction)
+# The shapiro-wilk test shows that the residuals are not normal.
+# But the qqPlot shows that it is normal.
+```
+
+p-value = 7.549e-16. Reject the null that the residual is normal.
+The shapiro-wilk test shows that the residuals are not normal. But the qqPlot shows that it is normal.
+Also, because the sample size is large enough for central limit theorem to apply, we can assume that the residuals are normal.
+
+## Use time series to predict future pH.
+```{r}
+# Autocorrelation
+par(mfrow = c(3, 1))
+# Alegria
+acf(ala$p_h, lag.max = 960)
+acf(ala$temp_c, lag.max = 960)
+acf(ala$tide_height, lag.max = 960)
+
+# Lompoc Landing
+acf(lol$p_h, lag.max = 960)
+acf(lol$temp_c, lag.max = 960)
+acf(lol$tide_height, lag.max = 960)
+
+# Bodega Bay
+acf(bob$p_h, lag.max = 960)
+acf(bob$temp_c, lag.max = 960)
+acf(bob$tide_height, lag.max = 960)
+```
+
+We can see that the period of pH is almost equal to the period of temperature, and the period of tide height is half of the period of pH.
+
+### Take lompoc landing as an example.
+```{r, include= FALSE}
+total<-read.csv('C:/Users/Ryan_/Documents/R/time series/files/total.csv')
+total_ph=ts(lol_ph[,2],y, frequency = 96)
+total_ph1=ts(lol_ph[,2],y, frequency = 1)
+
+lol_ph<-total[,c(2,4)]
+lol_ph$ph_s_locf<-na_seadec(total_ph, algorithm = "locf")
+ph1<-lol_ph$ph_s_locf
+
+lol_ph$imp <- na_kalman(total_ph1, model = "auto.arima")
+ph<-lol_ph$imp
+```
+
+```{r}
+#Show seasonal effect
+plot(decompose(ph1))
+adf.test(as.numeric(ph1))
+
+decomposed <- stl(ph1, s.window = 'periodic')
+seasonal <- decomposed$time.series[,1]
+trend   <- decomposed$time.series[,2]
+remainder <- decomposed$time.series[,3]
+
+deseasoned_ph <- ph1 - seasonal - trend
+acf(deseasoned_ph, lag.max = 200) # Not stationary
+pacf(deseasoned_ph, lag.max = 200)
+```
+
+The p-value of the adf.test is 0.525>0.05, I fail to reject the null. Unit root exists and the times series is non-stationary.
+
+### Take the first difference to make the data stationary
+```{r}
+acf(diff(deseasoned_ph), lag.max = 100) 
+acf(diff(deseasoned_ph), lag.max = 500)
+pacf(diff(deseasoned_ph), lag.max = 200) 
+```
+
+In the ACF chart: 4 spikes at first. So, q for non-seasonal part is 4; 4 spikes follow. So, q for seasonal part is 4.
+In the PACF chart: Many spikes at the beginning and decay exponentially. So p = 0.
+
+## Modelling
+```{r}
+a<-ph[1:500]
+ts.plot(a)
+auto.arima(ts(a, frequency = 96),D=1)
+model_lol0 <- arima(a,order=c(0,0,1),seasonal = list(order=c(1,1,0),period=96))
+model_lol1 <- arima(a,order=c(0,0,3),seasonal = list(order=c(0,1,3),period=96))
+```
+
+The model_lol0 is the model given by the auto.arima function. The model_lol1 is the model whose parameter is determined by the ACF and PACF charts.
+
+```{r}
+residual_lol0 <- residuals(model_lol0)
+msft_fitted0 <- a - residual_lol0
+ts.plot(a, main = 'model 0')
+points(msft_fitted0, type = "l", col = 2, lty = 2)
+
+residual_lol1 <- residuals(model_lol1)
+msft_fitted1 <- a - residual_lol1
+ts.plot(a, main = 'model 1')
+points(msft_fitted1, type = "l", col = 2, lty = 2)
+```
+
+Plot the original data with the model's prediction to show how close it fits.
+
+## Prediction
+```{r}
+x_forecast_ph0 <- forecast::forecast(model_lol0,h=4*12,level=c(0.8,0.95))
+x_forecast_ph1 <- forecast::forecast(model_lol1,h=4*12,level=c(0.8,0.95))
+
+true_ph_a=(ph[1:548])
+par(mfrow=c(3,1))
+plot(x_forecast_ph0,  main = 'model 0')
+plot(x_forecast_ph1,  main = 'model 1')
+ts.plot(true_ph_a, main = 'True pH')  
+```
+
+Use forecast function to predict the next 48 data points. i.e. the pH values of the next 12 hours.
+The three plots are the prediction of model 0, prediction of model 1, and the true value, respectively.
+
+We can fit the same model to the next 500 data points.
+```{r}
+b<-ph[500:1000]
+ts.plot(b)
+model_lol2 <- arima(b,order=c(0,0,3),seasonal = list(order=c(0,1,3),period=96))
+
+residual_lol2 <- residuals(model_lol2)
+msft_fitted2 <- b - residual_lol2
+ts.plot(b)
+points(msft_fitted2, type = "l", col = 2, lty = 2)
+x_forecast_ph2 <- forecast::forecast(model_lol2,h=4*12,level=c(0.8,0.95))
+
+true_ph_b=(ph[500:1048])
+par(mfrow=c(2,1))
+plot(x_forecast_ph2)
+ts.plot(true_ph_b)  
+```
+
